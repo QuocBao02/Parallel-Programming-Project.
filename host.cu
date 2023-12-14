@@ -237,6 +237,29 @@ void printDeviceInfo()
 
 }
 
+
+
+int* ComputeImportanceMap(uint8_t * grayscalepixels, int width, int height){
+    int x_sobel[3][3] = {{1, 0, -1}, {2, 0, -2}, {1, 0, -1}};
+    int y_sobel[3][3] = {{1, 2, 1}, {0, 0, 0}, {-1, -2, -1}};
+    // detect edges in the x direction
+    int* importancemap = (int*)malloc((width)*(height)*sizeof(int));
+    // detect edges in the y direction 
+    for (int row = 0; row < width; row++){
+        for(int col = 0; col < height; col ++){
+          int Gx = grayscalepixels[row*width + col]*x_sobel[0][0]+grayscalepixels[row*width + col + 1]*x_sobel[0][1]+grayscalepixels[row*width + col + 2]*x_sobel[0][2]+\
+                    grayscalepixels[(row+1)*width + col]*x_sobel[1][0]+grayscalepixels[(row+1)*width + col + 1]*x_sobel[1][1]+grayscalepixels[(row+1)*width + col + 2]*x_sobel[1][2]+\
+                    grayscalepixels[(row+2)*width + col]*x_sobel[2][0]+grayscalepixels[(row+2)*width + col + 1]*x_sobel[2][1]+grayscalepixels[(row+2)*width + col + 2]*x_sobel[2][2];
+          int Gy = grayscalepixels[row*width + col]*y_sobel[0][0]+grayscalepixels[row*width + col + 1]*y_sobel[0][1]+grayscalepixels[row*width + col + 2]*y_sobel[0][2]+\
+                    grayscalepixels[(row+1)*width + col]*y_sobel[1][0]+grayscalepixels[(row+1)*width + col + 1]*y_sobel[1][1]+grayscalepixels[(row+1)*width + col + 2]*y_sobel[1][2]+\
+                    grayscalepixels[(row+2)*width + col]*y_sobel[2][0]+grayscalepixels[(row+2)*width + col + 1]*y_sobel[2][1]+grayscalepixels[(row+2)*width + col + 2]*y_sobel[2][2];
+
+          importancemap[row*width + col] = abs(Gx) + abs(Gy);
+        }
+    }
+    return importancemap;
+}
+
 int main(int argc, char **argv){
     // process input arguments
     // Input arguments look like ./out.out (char*)img_name resize_width 
@@ -255,6 +278,17 @@ int main(int argc, char **argv){
     // change RGB to grayscale image 
     uint8_t* grayscale_pixels = ChangeRGBtoGrayScale(original_image, 3);
     
+    int * importance_map = ComputeImportanceMap(grayscale_pixels, original_image->x, original_image->y);
+    int imp_map_width = original_image->x;
+    int imp_map_height = original_image->y;
+
+    for (int i =0; i < imp_map_width; i++ ){
+        for (int j =0; j < imp_map_height; j++){
+            printf("%d ", importance_map[i*imp_map_width + j]);
+        }
+        printf("\n");
+    }
+    
     char out_grayscale[] = "grayscale.pnm";
     // save grayscale image 
     writeGrayScale_Pnm(grayscale_pixels, original_image->x, original_image->y,1, out_grayscale);
@@ -262,8 +296,13 @@ int main(int argc, char **argv){
     PPMImage * new_img = ChangeGrayScaletoRGB(grayscale_pixels, original_image->x, original_image->y);
 
     char out_rgb[] = "out_rgb.ppm";
-    
+
+
     writePPM(out_rgb, new_img);
+
+
+
+    return 0;
 
 
 }
