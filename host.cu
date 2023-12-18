@@ -141,27 +141,27 @@ uint8_t * ChangeRGBtoGrayScale(PPMImage *img, int numChannels){
     return grayscale_pixels;
 }
 
-PPMImage * ChangeGrayScaletoRGB(uint8_t *pixels, int width, int height){
-    // create PPMImage array 
-    PPMImage * img;
-    // allocate the memory 
-    img = (PPMImage*)malloc(sizeof(PPMImage));
-    if (pixels){
-      // allocate the memory for data pixels
-      img->x = width;
-      img->y = height;
-      img->data = (PPMPixel*)malloc(width*height*sizeof(PPMPixel));
-      for (int i =0; i < width*height; i++){
-          int red = pixels[i];
-          int green = pixels[i];
-          int blue = pixels[i];
-          img->data[i].red = red;
-          img->data[i].green = green;
-          img->data[i].blue = blue;
-      }
-    }
-    return img;
-}
+// PPMImage * ChangeGrayScaletoRGB(uint8_t *pixels, int width, int height){
+//     // create PPMImage array 
+//     PPMImage * img;
+//     // allocate the memory 
+//     img = (PPMImage*)malloc(sizeof(PPMImage));
+//     if (pixels){
+//       // allocate the memory for data pixels
+//       img->x = width;
+//       img->y = height;
+//       img->data = (PPMPixel*)malloc(width*height*sizeof(PPMPixel));
+//       for (int i =0; i < width*height; i++){
+//           int red = pixels[i];
+//           int green = pixels[i];
+//           int blue = pixels[i];
+//           img->data[i].red = red;
+//           img->data[i].green = green;
+//           img->data[i].blue = blue;
+//       }
+//     }
+//     return img;
+// }
 
 void writeGrayScale_Pnm(uint8_t * pixels, int width, int height, int numChannels, char * fileName)
 {
@@ -299,17 +299,21 @@ void FindSeam(int* importantmap, int width, int height, int seam[]){
     // Create a cumulative energy map 
     for (int i = 1; i < height; i++){
         for (int j =0; j< width; j++){
-            cumulative_energy[i][j] = importantmap[i*width+j] +\
+
+            if ( j - 1 < 0){
+                cumulative_energy[i][j] = importantmap[i*width+j] +\
+                findMin(cumulative_energy[i-1][j], cumulative_energy[i-1][j+1]);
+            }
+            else if ( j + 1 > width - 1){
+                cumulative_energy[i][j] = importantmap[i*width+j] +\
+                findMin(cumulative_energy[i-1][j -1], cumulative_energy[i-1][j]);
+            }
+            else{
+                cumulative_energy[i][j] = importantmap[i*width+j] +\
             findMin(findMin(cumulative_energy[i-1][j -1], cumulative_energy[i-1][j]), cumulative_energy[i-1][j+1]);
+            }
         }
     }
-
-    // for (int i = 0; i < height; i++){
-    //   for (int j = 0; j < width; j++){
-    //     printf("%d ", cumulative_energy[i][j]);
-    //   }
-    //   printf("\n");
-    // }
 
     // find minumum cumulative energy in the last row 
     int min_energy_index = findMinIndex(cumulative_energy[height - 1], 0, width -1);
@@ -319,62 +323,172 @@ void FindSeam(int* importantmap, int width, int height, int seam[]){
     // back tracking the seam 
     for (int i = height - 2; i >= 0; i--){
         int min_index = findMinIndex(cumulative_energy[i], max(0, min_energy_index -1), min(width -1, min_energy_index +1));
-        min_energy_index = min_index-1;
+        min_energy_index = min_index;
         seam[i] = min_energy_index;
     }
-    
 }
-
 
 
 void SeamCarving(PPMImage *img, int width, int height, int re_width){
     int n = width - re_width;
     for (int i = 1; i <= n; i ++){
-        // change rgb image to grayscale image 
-        uint8_t* grayscale_pixels = ChangeRGBtoGrayScale(img, 3);
+      // change rgb image to grayscale image 
+      uint8_t* grayscale_pixels = ChangeRGBtoGrayScale(img, 3);
 
-        // find energy map 
-        int * importance_map = ComputeImportanceMap(grayscale_pixels, width, height);
+      // char grayscale[] = "grayscale.ppm";
+      // writeGrayScale_Pnm(grayscale_pixels, width, height,1, grayscale);
 
-        // change energy_map into image
-        // uint8_t* energy_map = (uint8_t *)malloc(imp_map_width*imp_map_height*sizeof(uint8_t));
-        // for (int i =0; i < imp_map_height; i++ ){
-        // for (int j =0; j < imp_map_width; j++){
-        //     energy_map[i*imp_map_width + j] = importance_map[i*imp_map_width + j];
-        // }
-        // printf("\n");
-        // }
-        // char energy[] = "energy.ppm";
-        // writeGrayScale_Pnm(energy_map, original_image->x, original_image->y,1, energy);
+      // find energy map 
+      int * importance_map = ComputeImportanceMap(grayscale_pixels, width, height);
 
-        // find seam 
-        int seam[1000];
-        FindSeam(importance_map, width, height, seam);
+      // change energy_map into image
+      // uint8_t* energy_map = (uint8_t *)malloc(width*height*sizeof(uint8_t));
+      // for (int i =0; i < height; i++ ){
+      //   for (int j =0; j < width; j++){
+      //       energy_map[i*width + j] = importance_map[i*width + j];
+      //   }
+      // }
+      // char energy[] = "energy.ppm";
+      // writeGrayScale_Pnm(energy_map, width, height,1, energy);
 
-        // for(int tem = 0; tem < height; tem ++){
-        //   printf("%d \n", seam[tem]);
-        // }
+      // find seam 
+      int seam[1000];
+      FindSeam(importance_map, width, height, seam);
 
+      // create new image after removing seam
+      PPMImage * new_img = (PPMImage*)malloc(sizeof(PPMImage));
+      new_img->data = (PPMPixel*)malloc(height*(width-1)*sizeof(PPMPixel));
+      new_img->x = width -1;
+      new_img->y = height;
 
-        // removal seam 
-        for(int y = 0; y < height; y++){
-            for (int x = seam[y]; x < width - 1; x++){
-                img->data[y*width + x].red = img->data[y*width + x+1].red;
-                img->data[y*width + x].green = img->data[y*width +x+1].green;
-                img->data[y*width + x].blue = img->data[y*width + x+1].blue;
-            }
+      // removal seam 
+      for(int y = 0; y < height; y++){
+        if (seam[y] == 0){
+          for(int j = 0; j < width-1; j ++){
+              new_img->data[y*(width - 1) + j].red = img->data[y*width + j+1].red;
+              new_img->data[y*(width - 1) + j].green = img->data[y*width + j+1].green;
+              new_img->data[y*(width - 1) + j].blue = img->data[y*width + j+1].blue;
+          }
         }
-        // update original image size 
-        width -=1;
-        img->x-=1;
-        // printf("%d\n", width);
-        
-      
+        else if ( seam[y]>0 && seam[y] < width -1){
+          for (int j = 0; j < seam[y]; j ++){
+            new_img->data[y*(width -1) + j ].red = img->data[y*width + j].red;
+            new_img->data[y*(width -1) + j ].green = img->data[y*width + j].green;
+            new_img->data[y*(width -1) + j ].blue = img->data[y*width + j].blue;
+          }
+          for (int j = seam[y]; j < width -1; j ++){
+            new_img->data[y*(width -1) + j].red = img->data[y*width + j + 1].red;
+            new_img->data[y*(width -1) + j].green = img->data[y*width + j + 1].green;
+            new_img->data[y*(width -1) + j].blue = img->data[y*width + j + 1].blue;
+          }
+        }
+        else if ( seam[y] == width -1){
+          for (int j= 0 ; j < width -1; j ++){
+            new_img->data[y*(width -1) + j ].red = img->data[y*width + j].red;
+            new_img->data[y*(width -1) + j ].green = img->data[y*width + j].green;
+            new_img->data[y*(width -1) + j ].blue = img->data[y*width + j].blue;
+          }
+        }
+      }
+
+      // update original image size 
+      width -=1;
+      free(img);
+      img = new_img;
+
     }
-    char out_rgb[] = "out_rgb.ppm";
+    // write image 
+    char out_rgb[] = "out_host_rgb.ppm";
     writePPM(out_rgb, img);
 }
 
+
+void test_energy_map(){
+    int width = 20;
+    int height = 10;
+
+    uint8_t * grayscale = (uint8_t *)malloc(width*height*sizeof(uint8_t));
+    
+
+    // asign the value in grayscale
+    for(int i = 0; i < height; i ++){
+        for(int j = 0; j < width; j++){
+            grayscale[i*width+j] = rand()%10;
+        }
+    }
+
+    // print grayscale 
+    printf("grayscale matrix \n");
+    for(int i = 0; i<height; i ++){
+        for (int j = 0; j < width; j ++){
+            printf("%d ", grayscale[i*width + j]);
+        }
+        printf("\n");
+    }
+
+
+    // compute importan map 
+
+    int* important_map = ComputeImportanceMap(grayscale, width, height);
+
+    // print important map 
+    printf("Important Map\n");
+
+
+    for(int i = 0; i<height; i ++){
+        for (int j = 0; j < width; j ++){
+            printf("%d ", important_map[i*width + j]);
+        }
+        printf("\n");
+    }
+
+
+    // Find seam 
+
+    // int seam[100];
+
+    // FindSeam(important_map, width, height, seam);
+    int seam[] = {0, 0, 1, 1, 2, 2, 5, 7, 19, 19};
+    printf("Print Seam \n");
+
+    for(int tem = 0; tem < height; tem ++){
+      printf("%d \n", seam[tem]);
+    }
+
+    int* new_img = (int*)malloc(height*(width-1)*sizeof(int));
+    // test removal seam 
+    for(int y = 0; y < height; y++){
+      if (seam[y] == 0){
+        for(int j = 0; j < width-1; j ++){
+          new_img[y*(width - 1) + j] = grayscale[y*width + j+1];
+        }
+      }
+      else if ( seam[y]>0 && seam[y] < width -1){
+        for (int j = 0; j < seam[y]; j ++){
+          new_img[y*(width -1) + j ] = grayscale[y*width + j];
+        }
+        for (int j = seam[y]; j < width -1; j ++){
+          new_img[y*(width -1) + j] = grayscale[y*width + j + 1];
+        }
+      }
+      else if ( seam[y] == width -1){
+        for (int j= 0 ; j < width -1; j ++){
+          new_img[y*(width -1) + j ] = grayscale[y*width + j];
+        }
+      }
+    }
+
+    width = width -1;
+    // print grayscale 
+    printf("Print grayscale image\n");
+
+    for (int i = 0; i<height; i++ ){
+        for(int j = 0; j < width; j++){
+            printf("%d ", new_img[i*width + j]);
+        }
+        printf("\n");
+    }
+}
 
 int main(int argc, char **argv){
     // process input arguments
@@ -391,8 +505,10 @@ int main(int argc, char **argv){
     // read input image file
     PPMImage *original_image = readPPM(argv[1]);
 
-    SeamCarving(original_image, original_image->x, original_image->y, 300);
+    SeamCarving(original_image, original_image->x, original_image->y, atoi(argv[2]));
+    
+    // test_energy_map();
+
     return 0;
-
-
+    
 }
