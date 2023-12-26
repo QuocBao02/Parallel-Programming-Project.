@@ -199,7 +199,7 @@ uint8_t * ChangeRGBtoGrayScale(PPMImage *img, int numChannels){
 //     return img;
 // }
 
-void writeGrayScale_Pnm(uint8_t * pixels, int width, int height, int numChannels, char * fileName)
+void writeGrayScale_Pnm(int * pixels, int width, int height, int numChannels, char * fileName)
 {
 	FILE * f = fopen(fileName, "w");
 	if (f == NULL)
@@ -455,13 +455,13 @@ PPMImage* SeamCarvingHost(PPMImage *img, int width, int height, int re_width){
   return temp_img;
 }
 
-__global__ void ConvertRgb2Gray_Kernel_v1(PPMImage * img, int width, int height, uint8_t * grayPic) {
+__global__ void ConvertRgb2Gray_Kernel_v1(PPMPixel * pixels, int width, int height, uint8_t * grayPic) {
     int r = blockIdx.y * blockDim.y + threadIdx.y;
     int c = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (r < height && c < width) {
         int i = r * width + c;
-        grayPic[i] = 0.299f*img->data[i].red + 0.587f*img->data[i].green + 0.114f*img->data[i].blue;
+        grayPic[i] = 0.299f*pixels[i].red + 0.587f*pixels[i].green + 0.114f*pixels[i].blue;
     }
 }
 
@@ -472,7 +472,7 @@ __global__ void ComputeImportanceMap_Kernel_v1(uint8_t * grayscalepixels, int *e
     int col = threadIdx.x + blockIdx.x*blockDim.x;
     int row = threadIdx.y + blockIdx.y*blockDim.y;
   
-    if ( x < width && y < height){    
+    if ( col < width && row < height){    
       int Gx = grayscalepixels[row*width + col]*x_sobel[0][0]+grayscalepixels[row*width + col + 1]*x_sobel[0][1]+grayscalepixels[row*width + col + 2]*x_sobel[0][2]+\
                     grayscalepixels[(row+1)*width + col]*x_sobel[1][0]+grayscalepixels[(row+1)*width + col + 1]*x_sobel[1][1]+grayscalepixels[(row+1)*width + col + 2]*x_sobel[1][2]+\
                     grayscalepixels[(row+2)*width + col]*x_sobel[2][0]+grayscalepixels[(row+2)*width + col + 1]*x_sobel[2][1]+grayscalepixels[(row+2)*width + col + 2]*x_sobel[2][2];
@@ -486,84 +486,96 @@ __global__ void ComputeImportanceMap_Kernel_v1(uint8_t * grayscalepixels, int *e
 __global__ void FindSeam_Kernel_v1(int* importantmap, int width, int height, int* seam){
 
     // Create a cumulative energy map 
-    extern __shared__ int cumulative_energy[];
+    // declare a device array to store cumulative values
+    int * cumulative_energy;
+    cudaMalloc(&cumulative_energy, width*height*sizeof(int));
     
-    int x = threadIdx.x;
-    int y = threadIdx.y;
-
-    int idx = y*width + x;
-
-    // copy the first row of the important map to the cumulative energy map
-    cumulative_energy[idx] = importantmap[idx];
-
-    __syncthreads();
-
+    int col = blockIdx.x*blockDim.x+threadIdx.x;
+    int row = blockIdx.y*blockDim.y+threadIdx.y;
     
-    for (int i = 1; i < height; i++){
-      if ( x - 1 < 0){
-          cumulative_energy[idx] = importantmap[idx] +\
-          findMin(cumulative_energy[(i-1)*width + x], cumulative_energy[(i-1)*width + x+1]);
-      }
-      else if ( x + 1 > width - 1){
-          cumulative_energy[idx] = importantmap[idx] +\
-          findMin(cumulative_energy[(i-1)*width +x -1], cumulative_energy[(i-1)*width + x]);
-      }
-      else{
-          cumulative_energy[idx] = importantmap[idx] +\
-      findMin(findMin(cumulative_energy[(i-1)*width + x -1], cumulative_energy[(i-1)*width + x]), cumulative_energy[(i-1)*width + x+1]);
-      }
-      __syncthreads();
+    if (row < height && col < width){
+      if (row == 0){
+        // copy the first row of the important map to the cumulative energy map
+        cumulative_energy[row*width + col] = importantmap[row*width + col];
+      } else{
+        int left = (col>0) ? cumulative_energy[(row-1)*width+(col-1)]:INT_MAX;
+        int middle = cumulative_energy[(row-1)*width + col];
+        int right = (col < width -1) ? cumulative_energy[(row-1)*width + col + 1]:INT_MAX;
 
+        cumulative_energy[row*width+col] = importantmap[row*width +col] + min(min(left, middle), right);
+      }
     }
-
-
+    __syncthreads();
     // Find the minimum energy seam in the last row
-    if ( y == height -1){
-      int minEnergy = INT_MAX;
-      int minX = -1;
-
-      for (int i = 0; i < width; i++){
-        if(cumulative_energy[(height -1)*width + i] < minEnergy){
-          minEnergy = cumulative_energy[(height -1)*width + i];
-          minX = i;
+    if ( row == height - 1){
+      int min_value = cumulative_energy[row*width];
+      int min_index = 0;
+      for(int i = 1; i < width; i++){
+        if ( cumulative_energy[row*width+i] < min_value){
+          min_value = cumulative_energy[row*width+i];
+          min_index = i;
         }
       }
+      seam[row] = min_index;
 
-      // store the minimum energy seam 
-      seam[y] = minX;
+      for (int i = height - 2; i >= 0; --i) {
+          int left = (min_index > 0) ? cumulative_energy[i * width + (min_index - 1)] : INT_MAX;
+          int middle = cumulative_energy[i * width + min_index];
+          int right = (min_index < width - 1) ? cumulative_energy[i * width + (min_index + 1)] : INT_MAX;
+
+          // Determine the minimum energy path
+          if (left <= middle && left <= right) {
+              min_index = min_index - 1;
+          } else if (right <= left && right <= middle) {
+              min_index = min_index + 1;
+          }
+          // Update the seam array
+          seam[i] = min_index;
+      }
+
+    }
+    __syncthreads();
+    // Free allocated memory
+    if (row == height - 1) {
+        cudaFree(cumulative_energy);
     }
 }
 
 // CUDA kernel to remove a seam from the image
-__global__ void removeSeam_Kernel_v1(PPMImage *inputImage, PPMImage *outputImage, int *seam, int width, int height) {
-    int y = threadIdx.x + blockIdx.x * blockDim.x;
+__global__ void removeSeam_Kernel_v1(PPMPixel *inputImage, PPMPixel *outputImage, int *seam, int width, int height) {
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (y < height) {
-        int seamIndex = seam[y];
+    if (col < width && row < height) {
+        int seamCol = seam[row];
 
-        for (int x = 0; x < width; ++x) {
-            if (x < seamIndex) {
-                outputImage->data[y * (width - 1) + x] = inputImage->data[y * width + x];
-            } else if (x > seamIndex) {
-                outputImage->data[y * (width - 1) + (x - 1)] = inputImage->data[y * width + x];
-            } 
+        if (col < seamCol) {
+            // Copy pixels to the left of the seam
+            outputImage[row * (width - 1) + col].red = inputImage[row * width + col].red;
+            outputImage[row * (width - 1) + col].green = inputImage[row * width + col].green;
+            outputImage[row * (width - 1) + col].blue = inputImage[row * width + col].blue;
+        } else if (col > seamCol) {
+            // Skip the pixel at the seam column
+            // Shift pixels to the left to fill the gap left by the seam
+            outputImage[row * (width - 1) + col - 1].red = inputImage[row * width + col].red;
+            outputImage[row * (width - 1) + col - 1].green = inputImage[row * width + col].green;
+            outputImage[row * (width - 1) + col - 1].blue = inputImage[row * width + col].blue;
         }
     }
+    // __syncthreads();
 }
-
-__global__ void SeamCarving_Kernel_v1(PPMImage *in_host_img, PPMImage* out_host_img, width, int height, int re_width){
+void SeamCarving_Kernel_v1(PPMImage *in_host_img, PPMImage* out_host_img,int width, int height, int re_width){
     // create device image 
-    PPMImage* d_in_img, d_out_img;
-
+    PPMImage* d_in_img;
+    PPMPixel* d_pixels;
     // Allocate d_in_img;
     cudaMalloc(&d_in_img, sizeof(PPMImage));
-    cudaMalloc(&d_in_img->data, width*height*sizeof(PPMPixel));
+    cudaMalloc(&d_pixels, width*height*sizeof(PPMPixel));
 
-    
     // copy data from host to device 
     cudaMemcpy(d_in_img, in_host_img, sizeof(PPMImage), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_in_img->data, in_host_img->data, img->x*img->y*sizeof(PPMPixel), cudaMemcpyHostToDevice);
-
+    cudaMemcpy(d_pixels, in_host_img->data, width*height*sizeof(PPMPixel), cudaMemcpyHostToDevice);
+  
     // do seam carving algorithm.
     int n = width - re_width;
     n = 1;
@@ -574,179 +586,66 @@ __global__ void SeamCarving_Kernel_v1(PPMImage *in_host_img, PPMImage* out_host_
       // convert rgb image to grayscale 
       uint8_t * grayscale;
       cudaMalloc(&grayscale, width*height*sizeof(uint8_t));
-      ConvertRgb2Gray_Kernel_v1<<<gridDim, blockDim>>>(d_in_img, width, height, grayscale);
-
-      // Compute energy
+      ConvertRgb2Gray_Kernel_v1<<<gridDim, blockDim>>>(d_pixels, width, height, grayscale);
+        
+      // // Compute energy
       int* energy;
       cudaMalloc(&energy, width*height*sizeof(int));
-      ComputeImportanceMap_Kernel_v1<<<gridDim, blockDim>>>(grayscale, int *energy, int width, int height){
+      ComputeImportanceMap_Kernel_v1<<<gridDim, blockDim>>>(grayscale, energy, width, height);
+
+      // int* temp = (int *)malloc(width*height*sizeof(int));
+      // cudaMemcpy(temp, energy, width*height*sizeof(int), cudaMemcpyDeviceToHost);
+      // char out_rgb[] = "out_device_energy.ppm";
+      // writeGrayScale_Pnm(temp, width, height, 1, out_rgb);
+
+      // // Find min seam 
+      int* seam;
+      cudaMalloc(&seam, height*sizeof(int));
+      FindSeam_Kernel_v1<<<gridDim, blockDim>>>(energy, width, height, seam);
+      
+
+      // int * resultseam = (int*)malloc(height*sizeof(int));
+      // cudaMemcpy(resultseam, seam, sizeof(int)*height, cudaMemcpyDeviceToHost);
+      // for (int i = 0; i < height; i++){
+      //   printf("%d \n", resultseam[i]);
+      // }
+
+      // allocate device out pixels
+      PPMPixel * d_out_pixels;
+      cudaMalloc(&d_out_pixels, height*(width-1)*sizeof(PPMPixel));
+      // cudaMalloc(&d_out_img, sizeof(PPMImage));
+      // cudaMalloc(&d_out_img->data, (width-1)*height*sizeof(PPMPixel));
+      removeSeam_Kernel_v1<<<gridDim, blockDim.x>>>(d_pixels, d_out_pixels, seam,width, height);
+      
+      PPMImage * out_img = (PPMImage*)malloc(sizeof(PPMImage));
+      out_img->x = width-1;
+      out_img->y = height;
+      out_img->data = (PPMPixel*)malloc(height*(width-1)*sizeof(PPMPixel));
+
+      cudaMemcpy(out_img->data, d_out_pixels, height*(width-1)*sizeof(PPMPixel), cudaMemcpyDeviceToHost);
+
+      for(int i = 0; i< height; i++){
+        for (int j = 0; j < width -1; j ++){
+          printf("Times %d values: %d %d %d\n", i*(width-1)+j, out_img->data[i*(width-1) + j].red, out_img->data[i*(width-1) + j].green, out_img->data[i*(width-1) + j].blue);
+        }
+      }
+
+      cudaFree(grayscale);
+      cudaFree(energy);
+      cudaFree(seam);
+      // write image 
+      char out_rgb[] = "out_device_1_rgb.ppm";
+      writePPM(out_rgb, out_img);
+
+
+      // // Update size of image
+      width-=1;
 
     }
     
-
-
-
-
-
     // return d_out_img;
 }
 
-void test_energy_map(){
-    int width = 20;
-    int height = 10;
-
-    uint8_t * grayscale = (uint8_t *)malloc(width*height*sizeof(uint8_t));
-    
-
-    // asign the value in grayscale
-    for(int i = 0; i < height; i ++){
-        for(int j = 0; j < width; j++){
-            grayscale[i*width+j] = rand()%10;
-        }
-    }
-
-    // print grayscale 
-    printf("grayscale matrix \n");
-    for(int i = 0; i<height; i ++){
-        for (int j = 0; j < width; j ++){
-            printf("%d ", grayscale[i*width + j]);
-        }
-        printf("\n");
-    }
-
-
-    // compute importan map 
-
-    int* important_map = ComputeImportanceMap(grayscale, width, height);
-
-    // print important map 
-    printf("Important Map\n");
-
-
-    for(int i = 0; i<height; i ++){
-        for (int j = 0; j < width; j ++){
-            printf("%d ", important_map[i*width + j]);
-        }
-        printf("\n");
-    }
-
-
-    // Find seam 
-
-    // int seam[100];
-
-    // FindSeam(important_map, width, height, seam);
-    int seam[] = {0, 0, 1, 1, 2, 2, 5, 7, 19, 19};
-    printf("Print Seam \n");
-
-    for(int tem = 0; tem < height; tem ++){
-      printf("%d \n", seam[tem]);
-    }
-
-    int* new_img = (int*)malloc(height*(width-1)*sizeof(int));
-    // test removal seam 
-    for(int y = 0; y < height; y++){
-      if (seam[y] == 0){
-        for(int j = 0; j < width-1; j ++){
-          new_img[y*(width - 1) + j] = grayscale[y*width + j+1];
-        }
-      }
-      else if ( seam[y]>0 && seam[y] < width -1){
-        for (int j = 0; j < seam[y]; j ++){
-          new_img[y*(width -1) + j ] = grayscale[y*width + j];
-        }
-        for (int j = seam[y]; j < width -1; j ++){
-          new_img[y*(width -1) + j] = grayscale[y*width + j + 1];
-        }
-      }
-      else if ( seam[y] == width -1){
-        for (int j= 0 ; j < width -1; j ++){
-          new_img[y*(width -1) + j ] = grayscale[y*width + j];
-        }
-      }
-    }
-
-    width = width -1;
-    // print grayscale 
-    printf("Print grayscale image\n");
-
-    for (int i = 0; i<height; i++ ){
-        for(int j = 0; j < width; j++){
-            printf("%d ", new_img[i*width + j]);
-        }
-        printf("\n");
-    }
-}
-
-// Function to allocate device memory for PPMImage structure and its data
-PPMImage* allocateDeviceMemory(PPMImage* hostImage) {
-    PPMImage* deviceImage;
-    // Allocate device memory for PPMImage structure
-    cudaMalloc((void**)&deviceImage, sizeof(PPMImage));
-
-    // Allocate device memory for data pointed to by the structure's pointer
-    cudaMalloc((void**)&(deviceImage->data), sizeof(PPMPixel) * hostImage->x * hostImage->y);
-    deviceImage->x = hostImage->x;
-    deviceImage->y = hostImage->y;
-    // Copy the structure to the device
-    cudaMemcpy(deviceImage, hostImage, sizeof(PPMImage), cudaMemcpyHostToDevice);
-
-    // Copy the data to the device
-    cudaMemcpy((deviceImage)->data, hostImage->data, sizeof(PPMPixel) * hostImage->x * hostImage->y, cudaMemcpyHostToDevice);
-    
-    char out_rgb[] = "out_device_rgb.ppm";
-    writePPM(out_rgb, deviceImage);
-
-    return deviceImage;
-}
-
-// Function to copy device image back to host variable
-PPMImage* copyDeviceToHost(PPMImage* deviceImage) {
-    PPMImage* hostImage;
-    
-    cudaMalloc((void**)&hostImage, sizeof(PPMImage));
-    // Copy the structure from device to host
-    cudaMemcpy(hostImage, deviceImage, sizeof(PPMImage), cudaMemcpyDeviceToHost);
-
-    // Allocate host memory for the data
-    hostImage->data = (PPMPixel*)malloc(sizeof(PPMPixel) * hostImage->x * hostImage->y);
-
-    // Copy the data from device to host
-    cudaMemcpy(hostImage->data, deviceImage->data, sizeof(PPMPixel) * hostImage->x * hostImage->y, cudaMemcpyDeviceToHost);
-    return hostImage;
-}
-
-// Function to free device memory for PPMImage structure and its data
-void freeDeviceMemory(PPMImage* deviceImage) {
-    cudaFree(deviceImage->data);
-    cudaFree(deviceImage);
-}
-void test_cuda_memory(PPMImage * img){
-  // Allocate device memory
-    PPMImage* deviceImage;
-    cudaMalloc(&deviceImage, sizeof(PPMImage));
-    // PPMPixel * d_pixels;
-    // cudaMalloc(&d_pixels, img->x*img->y*sizeof(PPMPixel));
-    cudaMemcpy(deviceImage, img, sizeof(PPMImage), cudaMemcpyHostToDevice);
-    cudaMemcpy(deviceImage->data, img->data, img->x*img->y*sizeof(PPMPixel), cudaMemcpyHostToDevice);
-
-
-    // Your CUDA kernel or other operations go here...
-
-    // Copy device image back to host variable
-    PPMImage * temp_img;
-    temp_img = (PPMImage*)malloc(sizeof(PPMImage));
-    temp_img->x = img->x;
-    temp_img->y = img->y;
-    
-    temp_img->data = (PPMPixel*)malloc(img->x*img->y*sizeof(PPMPixel));
-    cudaMemcpy(temp_img->data, deviceImage->data, img->x*img->y*sizeof(PPMPixel), cudaMemcpyDeviceToHost);
-
-    char out_rgb[] = "out_device_rgb.ppm";
-    writePPM(out_rgb, temp_img);
-    // Free device memory
-    // freeDeviceMemory(deviceImage);
-}
 
 int main(int argc, char **argv){
     // process input arguments
@@ -778,7 +677,14 @@ int main(int argc, char **argv){
     // float time = timer.Elapsed();
     // printf("Processing time use host: %f ms\n\n", time);
 
+
+
+
+
+
     // using kernel 
+    PPMImage* out_img = (PPMImage*)malloc(sizeof(PPMImage));
+    SeamCarving_Kernel_v1(original_image, out_img, width, height, 300);
     // set blocksize 
     // dim3 blockSize(32, 32);
 
