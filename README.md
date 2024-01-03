@@ -7,9 +7,9 @@ Ngành: Khoa Học Dữ Liệu
 
 Lớp: 20KDL1
 
-Nhóm:
+Nhóm: 8
 
-Giảng viên: 
+Giảng viên: Phạm Trọng Nghĩa, Trần Quốc Huy. 
 
 # 2. Thông tin nhóm : 
 
