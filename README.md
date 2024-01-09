@@ -17,7 +17,7 @@ Giảng viên: Phạm Trọng Nghĩa, Trần Quốc Huy.
 |-------|-------|-------|
 | 1 | Nguyễn Quốc Bảo | 20280006 |
 | 2 | Võ Thái Bình | 20280007 |
-| 3 | Trần Nhất Duy  | 20280024 |
+| 3 | Trần Nguyễn Nhất Duy  | 20280024 |
 
 # 3. Mô tả đồ án :
 - Đồ án cuối kì môn Lập trình song song ( Đại học Khoa học tự nhiên - DDHQG HCM)
@@ -76,11 +76,8 @@ Ngày vấn đáp: 10/01/2024
 | Tiến hành tối ưu hóa lần 1 | Trần Nhất Duy  |
 | Tiến hành tối ưu hóa lần 2 | Nguyễn Quốc Bảo  |
 | Tổng hợp và viết báo cáo | Võ Thái Bình |
-# 7. Kết quả thu được: 
 
-# 8. Đút kết:
-
-# 9. Tài liệu tham khảo: 
+# 7. Tài liệu tham khảo: 
 Slides from teacher 
 
 [Seam Carving - Image resizing with CUDA](https://github.com/the0nlyWyvern/seam-carving/tree/main)
