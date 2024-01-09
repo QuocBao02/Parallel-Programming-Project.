@@ -840,48 +840,183 @@ void SeamCarving_Kernel_v1(PPMImage *in_host_img, PPMImage* out_host_img,int wid
     // return d_out_img;
 }
 
-__global__ void FindSeam_Kernel_v2(int width, int height, int* seam, int * cumulative_energy) {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
+// Utility function to get the index in a 1D array given 2D coordinates
+// __device__ int getIndex(int x, int y, int width) {
+//     return y * width + x;
+// }
 
-    // Find the minimum energy seam in the last row using reduction
-    if (row == height - 1) {
-        extern __shared__ int sdata[];  // Shared memory for reduction
+// __global__ void FindSeam_Kernel_v2(int width, int height, int* seam, int * cumulative_energy) {
+//   int row = blockIdx.y * blockDim.y + threadIdx.y;
 
-        int tid = threadIdx.x;
-        sdata[tid] = cumulative_energy[row * width + tid];
+//     // Find the minimum energy seam in the last row
+//     if (row == height - 1) {
+//         // Memory access optimization: Load a portion of the row into shared memory
+//         __shared__ int shared_energy[32];  // Adjust size as needed
+//         int segment_start = threadIdx.x * (width / blockDim.x);
+//         int segment_end = segment_start + (width / blockDim.x);
+//         for (int i = segment_start; i < segment_end; i++) {
+//             shared_energy[i - segment_start] = cumulative_energy[row * width + i];
+//         }
+//         __syncthreads();
+
+//         // Find the minimum in shared memory
+//         int min_value = shared_energy[threadIdx.x];
+//         int min_index = threadIdx.x;
+//         for (int i = threadIdx.x + 1; i < blockDim.x; i++) {
+//             if (shared_energy[i] < min_value) {
+//                 min_value = shared_energy[i];
+//                 min_index = i;
+//             }
+//         }
+
+//         // Use atomic operations for race conditions
+//         atomicMin(&seam[row], min_index + segment_start);
+
+//         // Backtrack through the rows
+//         for (int i = height - 2; i >= 0; --i) {
+//             int left = (min_index > 0) ? cumulative_energy[i * width + (min_index - 1)] : INT_MAX;
+//             int middle = cumulative_energy[i * width + min_index];
+//             int right = (min_index < width - 1) ? cumulative_energy[i * width + (min_index + 1)] : INT_MAX;
+
+//             // Determine the minimum energy path
+//             if (left <= middle && left <= right) {
+//                 min_index = min_index - 1;
+//             } else if (right <= left && right <= middle) {
+//                 min_index = min_index + 1;
+//             }
+//             // Update the seam array
+//             atomicMin(&seam[i], min_index);
+//         }
+//     }
+  //  int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+  //   // Shared memory for parallel reduction
+  //   extern __shared__ int shared_min_values[];
+
+  //   // Find the minimum energy seam in the last row using parallel reduction
+  //   if (row == height - 1) {
+  //       int index = threadIdx.x + blockIdx.x * blockDim.x;
+
+  //       // Load initial values into shared memory
+  //       shared_min_values[threadIdx.x] = index < width ? cumulative_energy[row * width + index] : INT_MAX;
+  //       __syncthreads();
+
+  //       // Perform parallel reduction
+  //       for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+  //           if (threadIdx.x < stride) {
+  //               shared_min_values[threadIdx.x] = min(shared_min_values[threadIdx.x], shared_min_values[threadIdx.x + stride]);
+  //           }
+  //           __syncthreads();
+  //       }
+
+  //       // Store the block-wise minimum index in global memory
+  //       if (threadIdx.x == 0) {
+  //           atomicMin(&seam[row], shared_min_values[0]); // Store only the index for clarity
+  //       }
+  //   }
+
+  //   __syncthreads();
+
+  //   // Backtrack to find the full seam
+  //   if (threadIdx.x == seam[height - 1]) {
+  //       int min_index = seam[height - 1]; // Initialize for clarity
+  //       for (int i = height - 2; i >= 0; --i) {
+  //           int left = (min_index > 0) ? cumulative_energy[i * width + (min_index - 1)] : INT_MAX;
+  //           int middle = cumulative_energy[i * width + min_index];
+  //           int right = (min_index < width - 1) ? cumulative_energy[i * width + (min_index + 1)] : INT_MAX;
+
+  //           // Determine the minimum energy path
+  //           if (left <= middle && left <= right) {
+  //               min_index = min_index - 1;
+  //           } else if (right <= left && right <= middle) {
+  //               min_index = min_index + 1;
+  //           }
+
+  //           seam[i] = min_index;
+  //       }
+  //   }
+  
+    // int row = blockIdx.y*blockDim.y + threadIdx.y;
+
+    // // Shared memory for partial results within a block
+    // __shared__ int min_values[BLOCK_SIZE];
+
+    // // Find the minimum energy index within each thread's portion of the row
+    // int min_value = INT_MAX;
+    // int min_index = 0;
+    // for (int i = threadIdx.x; i < width; i += blockDim.x) {
+    //     int energy = cumulative_energy[row * width + i];
+    //     if (energy < min_value) {
+    //         min_value = energy;
+    //         min_index = i;
+    //     }
+    // }
+
+    // // Store partial results in shared memory
+    // min_values[threadIdx.x] = min_index;
+    // __syncthreads();
+
+    // // Perform parallel reduction within the block
+    // for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+    //     if (threadIdx.x < s) {
+    //         int other_index = min_values[threadIdx.x + s];
+    //         int other_value = cumulative_energy[row * width + other_index];
+    //         if (other_value < min_value) {
+    //             min_value = other_value;
+    //             min_index = other_index;
+    //         }
+    //         min_values[threadIdx.x] = min_index;
+    //     }
+    //     __syncthreads();
+    // }
+
+    // // Final reduction step for the first thread in each block
+    // if (threadIdx.x == 0) {
+    //     seam[row] = min_index;
+
+    //     // Backtrack to find the complete seam
+    //     for (int i = row - 1; i >= 0; --i) {
+    //         int left = (min_index > 0) ? cumulative_energy[i * width + (min_index - 1)] : INT_MAX;
+    //         int middle = cumulative_energy[i * width + min_index];
+    //         int right = (min_index < width - 1) ? cumulative_energy[i * width + (min_index + 1)] : INT_MAX;
+
+    //         if (left <= middle && left <= right) {
+    //             min_index = min_index - 1;
+    //         } else if (right <= left && right <= middle) {
+    //             min_index = min_index + 1;
+    //         }
+    //         seam[i] = min_index;
+    //     }
+    // }
+// }
+__global__ void ConvertRgb2Gray_Kernel_v2(PPMPixel *pixels, int width, int height, uint8_t *grayPic) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < width && y < height) {
+        // Load the RGB pixel into shared memory
+        __shared__ PPMPixel sharedPixels[32][32]; 
+        sharedPixels[threadIdx.y][threadIdx.x] = pixels[y * width + x];
         __syncthreads();
 
-        // Perform reduction to find the minimum value and its index
-        for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-            if (tid < s) {
-                int other = sdata[tid + s];
-                if (other < sdata[tid]) {
-                    sdata[tid] = other;
-                    seam[row] = tid + s;  // Store the index of the minimum value
-                }
-            }
+        // Perform reduction in shared memory
+        int r = sharedPixels[threadIdx.y][threadIdx.x].red;
+        int g = sharedPixels[threadIdx.y][threadIdx.x].green;
+        int b = sharedPixels[threadIdx.y][threadIdx.x].blue;
+        for (int offset = blockDim.x / 2; offset > 0; offset /= 2) {
             __syncthreads();
-        }
-
-        // Backtrack to find the full seam path
-        for (int i = height - 2; i >= 0; --i) {
-            int min_index = seam[i + 1];
-            int left = (min_index > 0) ? cumulative_energy[i * width + (min_index - 1)] : INT_MAX;
-            int middle = cumulative_energy[i * width + min_index];
-            int right = (min_index < width - 1) ? cumulative_energy[i * width + (min_index + 1)] : INT_MAX;
-
-            // Determine the minimum energy path
-            if (left <= middle && left <= right) {
-                min_index = min_index - 1;
-            } else if (right <= left && right <= middle) {
-                min_index = min_index + 1;
+            if (threadIdx.x < offset) {
+                r += sharedPixels[threadIdx.y][threadIdx.x + offset].red;
+                g += sharedPixels[threadIdx.y][threadIdx.x + offset].green;
+                b += sharedPixels[threadIdx.y][threadIdx.x + offset].blue;
             }
-
-            seam[i] = min_index;
         }
+
+        // Final grayscale calculation and write to global memory
+        uint8_t gray = (uint8_t)((0.299f * r) + (0.587f * g) + (0.114f * b));
+        grayPic[y * width + x] = gray;
     }
 }
-
 void SeamCarving_Kernel_v2(PPMImage *in_host_img, PPMImage* out_host_img,int width, int height, int re_width){
     // create device image 
     PPMImage* d_in_img;
@@ -903,7 +1038,7 @@ void SeamCarving_Kernel_v2(PPMImage *in_host_img, PPMImage* out_host_img,int wid
       // convert rgb image to grayscale 
       uint8_t * grayscale;
       cudaMalloc(&grayscale, width*height*sizeof(uint8_t));
-      ConvertRgb2Gray_Kernel<<<gridDim, blockDim>>>(d_in_pixels, width, height, grayscale);
+      ConvertRgb2Gray_Kernel_v2<<<gridDim, blockDim>>>(d_in_pixels, width, height, grayscale);
 
       // // Compute energy
       int* energy;
@@ -914,6 +1049,7 @@ void SeamCarving_Kernel_v2(PPMImage *in_host_img, PPMImage* out_host_img,int wid
       int* seam;
       cudaMalloc(&seam, height*sizeof(int));
 
+
       int * cumulative_energy, *temp_energy;
       cudaMalloc(&cumulative_energy, width*height*sizeof(int));
       cudaMalloc(&temp_energy, width*height*sizeof(int));
@@ -921,7 +1057,7 @@ void SeamCarving_Kernel_v2(PPMImage *in_host_img, PPMImage* out_host_img,int wid
         ComputeCumulativeMap<<<gridDim, blockDim>>>(energy, width, cumulative_energy, temp_energy, row);
       }
       // find seam kernel
-      FindSeam_Kernel_v2<<<gridDim, blockDim, width*sizeof(int)>>>(width, height, seam, cumulative_energy);
+      FindSeam_Kernel<<<gridDim, blockDim>>>(width, height, seam, cumulative_energy);
   
       // allocate device out pixels
       PPMPixel * d_out_pixels;
